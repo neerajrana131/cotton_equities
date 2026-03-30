@@ -241,18 +241,29 @@ def chart_fan(S0, r, sigma, T, loan, lrs):
     floor         = [loan + lrs + CARRY_RATE * d for d in days]
 
     fig = go.Figure()
+    # Outer 10–90th band with visible boundary lines
     fig.add_trace(go.Scatter(x=days+days[::-1], y=list(p90)+list(p10[::-1]),
-        fill='toself', fillcolor='rgba(14,165,233,0.13)',
+        fill='toself', fillcolor='rgba(56,189,248,0.22)',
         line=dict(color='rgba(0,0,0,0)'), name='10th\u201390th pct'))
+    fig.add_trace(go.Scatter(x=days, y=p10,
+        line=dict(color='rgba(14,165,233,0.55)', width=1.2),
+        showlegend=False, hoverinfo='none'))
+    fig.add_trace(go.Scatter(x=days, y=p90,
+        line=dict(color='rgba(14,165,233,0.55)', width=1.2),
+        showlegend=False, hoverinfo='none'))
+    # Inner 25–75th band with visible boundary lines
     fig.add_trace(go.Scatter(x=days+days[::-1], y=list(p75)+list(p25[::-1]),
-        fill='toself', fillcolor='rgba(14,165,233,0.32)',
+        fill='toself', fillcolor='rgba(14,165,233,0.48)',
         line=dict(color='rgba(0,0,0,0)'), name='25th\u201375th pct'))
-    for i in range(0, n, 15):
-        fig.add_trace(go.Scatter(x=days, y=Ss[i],
-            line=dict(color='rgba(100,116,139,0.18)', width=0.7),
-            showlegend=False, hoverinfo='none'))
+    fig.add_trace(go.Scatter(x=days, y=p25,
+        line=dict(color='rgba(3,105,161,0.75)', width=1.2),
+        showlegend=False, hoverinfo='none'))
+    fig.add_trace(go.Scatter(x=days, y=p75,
+        line=dict(color='rgba(3,105,161,0.75)', width=1.2),
+        showlegend=False, hoverinfo='none'))
+    # Median (solid, dark navy) and floor (amber dashed)
     fig.add_trace(go.Scatter(x=days, y=p50,
-        line=dict(color='#0369a1', width=3), name='Median path'))
+        line=dict(color='#0c4a6e', width=3.5), name='Median path'))
     fig.add_trace(go.Scatter(x=days, y=floor,
         line=dict(color='#d97706', width=2.5, dash='dash'),
         name='Loan+LRS+Carry floor'))
@@ -263,7 +274,7 @@ def chart_fan(S0, r, sigma, T, loan, lrs):
         xaxis=dict(title='Days elapsed', tickfont=dict(size=11)),
         yaxis=dict(title='Cotton price (\u00a2/lb)', ticksuffix='\u00a2', tickfont=dict(size=11)))
     st.plotly_chart(fig, use_container_width=True)
-    st.caption(f"400 GBM paths · Bands = 10th\u201390th and 25th\u201375th percentile · "
+    st.caption(f"400 GBM simulations · Bands = 10th\u201390th (outer) and 25th\u201375th (inner) percentile · "
                f"Dashed amber = loan floor rising at {CARRY_RATE}\u00a2/lb/day")
 
 
@@ -335,8 +346,8 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
             type='buttons', direction='right', x=0.0, y=1.17, xanchor='left',
             buttons=[dict(method='update', args=[{'visible': vis_list(i)}], label=s[0])
                      for i, s in enumerate(scenarios)],
-            showactive=True, bgcolor='#f1f5f9', bordercolor='#e2e8f0',
-            font=dict(size=11),
+            showactive=True, bgcolor='#1e3a5f', bordercolor='#0369a1',
+            font=dict(size=11, color='white'),
         )],
     )
     fig.add_hline(y=S0, line_dash='dot', line_color='#94a3b8', line_width=1,
