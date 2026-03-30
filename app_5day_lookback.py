@@ -333,8 +333,6 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
         name='Loan+LRS+Carry floor', visible=True,
         hovertemplate='Day %{x}<br>Floor: %{y:.2f}\u00a2<extra></extra>'))
 
-    total_traces = n_scen * TRACES_PER + 1
-
     def vis_list(active):
         v = []
         for i in range(n_scen):
@@ -342,18 +340,33 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
         v.append(True)
         return v
 
-    # Buttons — each click also updates the active-scenario badge (annotations[0])
-    buttons = []
+    # 3 separate menus (one per scenario) — each has its own bgcolor so we
+    # can independently highlight the active one via relayout args.
+    # Default active = Sideways (index 1).
+    DARK   = '#1e3a5f'   # inactive button colour
+    ACTIVE = '#2d6aa0'   # lighter navy for active button
+    X_POS  = [0.0, 0.21, 0.43]   # approximate x positions for the 3 buttons
+
+    updatemenus = []
     for i, (label, color, bias, seed) in enumerate(scenarios):
         clean = label.strip()
-        buttons.append(dict(
-            method='update',
-            args=[
-                {'visible': vis_list(i)},
-                {'annotations[0].text': f'\u25b6 {clean}',
-                 'annotations[0].bgcolor': color},
-            ],
-            label=clean,
+        bgcolor_update = {
+            'updatemenus[0].bgcolor': ACTIVE if i == 0 else DARK,
+            'updatemenus[1].bgcolor': ACTIVE if i == 1 else DARK,
+            'updatemenus[2].bgcolor': ACTIVE if i == 2 else DARK,
+        }
+        updatemenus.append(dict(
+            type='buttons',
+            x=X_POS[i], y=1.17, xanchor='left',
+            showactive=False,
+            bgcolor=ACTIVE if i == 1 else DARK,   # Sideways active by default
+            bordercolor='#0369a1',
+            font=dict(size=11, color='white'),
+            buttons=[dict(
+                method='update',
+                args=[{'visible': vis_list(i)}, bgcolor_update],
+                label=clean,
+            )],
         ))
 
     fig.update_layout(
@@ -364,23 +377,8 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
         yaxis=dict(title='Price (\u00a2/lb)', ticksuffix='\u00a2',
                    title_font=dict(size=13, color='#1e293b'),
                    tickfont=dict(size=11, color='#1e293b')),
-        # Active-scenario badge: positioned right of the buttons, same y level
-        annotations=[dict(
-            x=0.99, y=1.17, xref='paper', yref='paper',
-            text='\u25b6 Sideways (flat)',
-            showarrow=False,
-            font=dict(size=11, color='white', family='Arial'),
-            xanchor='right', yanchor='middle',
-            bgcolor='#0284c7', borderpad=5,
-        )],
-        updatemenus=[dict(
-            type='buttons', direction='right', x=0.0, y=1.17, xanchor='left',
-            buttons=buttons,
-            showactive=False, bgcolor='#1e3a5f', bordercolor='#0369a1',
-            font=dict(size=11, color='white'),
-        )],
+        updatemenus=updatemenus,
     )
-    # add_hline appends AFTER update_layout → becomes annotations[1], not [0]
     fig.add_hline(y=S0, line_dash='dot', line_color='#94a3b8', line_width=1,
                   annotation_text=f'  S\u2080={S0}\u00a2',
                   annotation_font_size=11, annotation_font_color='#94a3b8')
