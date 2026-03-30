@@ -337,6 +337,20 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
         v.append(True)   # floor always on
         return v
 
+    # Buttons — each click also updates the active-scenario badge (annotations[0])
+    buttons = []
+    for i, (label, color, bias, seed) in enumerate(scenarios):
+        clean = label.strip()
+        buttons.append(dict(
+            method='update',
+            args=[
+                {'visible': vis_list(i)},
+                {'annotations[0].text': f'\u25b6 {clean}',
+                 'annotations[0].bgcolor': color},
+            ],
+            label=clean,
+        ))
+
     fig.update_layout(
         **PLOTLY_BASE, height=380,
         xaxis=dict(title='Days elapsed',
@@ -345,14 +359,23 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
         yaxis=dict(title='Price (\u00a2/lb)', ticksuffix='\u00a2',
                    title_font=dict(size=13, color='#1e293b'),
                    tickfont=dict(size=11, color='#1e293b')),
+        # Active-scenario badge: positioned right of the buttons, same y level
+        annotations=[dict(
+            x=0.99, y=1.17, xref='paper', yref='paper',
+            text='\u25b6 Sideways (flat)',
+            showarrow=False,
+            font=dict(size=11, color='white', family='Arial'),
+            xanchor='right', yanchor='middle',
+            bgcolor='#0284c7', borderpad=5,
+        )],
         updatemenus=[dict(
             type='buttons', direction='right', x=0.0, y=1.17, xanchor='left',
-            buttons=[dict(method='update', args=[{'visible': vis_list(i)}], label=s[0])
-                     for i, s in enumerate(scenarios)],
+            buttons=buttons,
             showactive=False, bgcolor='#1e3a5f', bordercolor='#0369a1',
             font=dict(size=11, color='white'),
         )],
     )
+    # add_hline appends AFTER update_layout → becomes annotations[1], not [0]
     fig.add_hline(y=S0, line_dash='dot', line_color='#94a3b8', line_width=1,
                   annotation_text=f'  S\u2080={S0}\u00a2',
                   annotation_font_size=11, annotation_font_color='#94a3b8')
