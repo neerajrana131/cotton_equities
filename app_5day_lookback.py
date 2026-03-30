@@ -271,8 +271,12 @@ def chart_fan(S0, r, sigma, T, loan, lrs):
                   annotation_text=f'  S\u2080={S0}\u00a2',
                   annotation_font_size=11, annotation_font_color='#94a3b8')
     fig.update_layout(**PLOTLY_BASE, height=360,
-        xaxis=dict(title='Days elapsed', tickfont=dict(size=11)),
-        yaxis=dict(title='Cotton price (\u00a2/lb)', ticksuffix='\u00a2', tickfont=dict(size=11)))
+        xaxis=dict(title='Days elapsed',
+                   title_font=dict(size=13, color='#1e293b'),
+                   tickfont=dict(size=11, color='#1e293b')),
+        yaxis=dict(title='Cotton price (\u00a2/lb)', ticksuffix='\u00a2',
+                   title_font=dict(size=13, color='#1e293b'),
+                   tickfont=dict(size=11, color='#1e293b')))
     st.plotly_chart(fig, use_container_width=True)
     st.caption(f"400 GBM simulations · Bands = 10th\u201390th (outer) and 25th\u201375th (inner) percentile · "
                f"Dashed amber = loan floor rising at {CARRY_RATE}\u00a2/lb/day")
@@ -340,13 +344,17 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
 
     fig.update_layout(
         **PLOTLY_BASE, height=380,
-        xaxis=dict(title='Days elapsed', tickfont=dict(size=11)),
-        yaxis=dict(title='Price (\u00a2/lb)', ticksuffix='\u00a2', tickfont=dict(size=11)),
+        xaxis=dict(title='Days elapsed',
+                   title_font=dict(size=13, color='#1e293b'),
+                   tickfont=dict(size=11, color='#1e293b')),
+        yaxis=dict(title='Price (\u00a2/lb)', ticksuffix='\u00a2',
+                   title_font=dict(size=13, color='#1e293b'),
+                   tickfont=dict(size=11, color='#1e293b')),
         updatemenus=[dict(
             type='buttons', direction='right', x=0.0, y=1.17, xanchor='left',
             buttons=[dict(method='update', args=[{'visible': vis_list(i)}], label=s[0])
                      for i, s in enumerate(scenarios)],
-            active=1, showactive=True, bgcolor='#1e3a5f', bordercolor='#0369a1',
+            showactive=False, bgcolor='#1e3a5f', bordercolor='#0369a1',
             font=dict(size=11, color='white'),
         )],
     )
@@ -389,8 +397,10 @@ def chart_lookback_breakdown(call_res, put_res):
         fig.add_annotation(x=lbl, y=total, text=f'<b>{total:.4f}\u00a2 total</b>',
                            showarrow=False, yshift=12, font=dict(size=12, color='#1e293b'))
     fig.update_layout(**PLOTLY_BASE, height=340, barmode='stack',
-        xaxis=dict(tickfont=dict(size=13)),
-        yaxis=dict(title='Value (\u00a2/lb)', ticksuffix='\u00a2', tickfont=dict(size=11)))
+        xaxis=dict(tickfont=dict(size=13, color='#1e293b')),
+        yaxis=dict(title='Value (\u00a2/lb)', ticksuffix='\u00a2',
+                   title_font=dict(size=13, color='#1e293b'),
+                   tickfont=dict(size=11, color='#1e293b')))
     st.plotly_chart(fig, use_container_width=True)
     st.info(
         f"The **{LB_LABEL} lookback window** contributes "
@@ -449,9 +459,12 @@ def chart_sensitivity(sens):
             text='BASE', showarrow=False, font=dict(size=10, color='#475569'),
             bgcolor='#f1f5f9', borderpad=3)
         fig.update_layout(**PLOTLY_BASE, height=340, barmode='group',
-            xaxis=dict(title='Spot price', tickfont=dict(size=11)),
+            xaxis=dict(title='Spot price',
+                       title_font=dict(size=13, color='#1e293b'),
+                       tickfont=dict(size=11, color='#1e293b')),
             yaxis=dict(title='Option price (\u00a2/lb)', ticksuffix='\u00a2',
-                       tickfont=dict(size=11)))
+                       title_font=dict(size=13, color='#1e293b'),
+                       tickfont=dict(size=11, color='#1e293b')))
         st.plotly_chart(fig, use_container_width=True)
 
         hdr = ['Spot', 'Call (\u00a2/lb)', '\u00b1SE', 'Put (\u00a2/lb)', '\u00b1SE', '']
@@ -496,9 +509,12 @@ def chart_sensitivity(sens):
             text='BASE', showarrow=False, font=dict(size=10, color='#475569'),
             bgcolor='#f1f5f9', borderpad=3)
         fig.update_layout(**PLOTLY_BASE, height=320,
-            xaxis=dict(title='Volatility', tickfont=dict(size=11)),
+            xaxis=dict(title='Volatility',
+                       title_font=dict(size=13, color='#1e293b'),
+                       tickfont=dict(size=11, color='#1e293b')),
             yaxis=dict(title='Option price (\u00a2/lb)', ticksuffix='\u00a2',
-                       tickfont=dict(size=11)))
+                       title_font=dict(size=13, color='#1e293b'),
+                       tickfont=dict(size=11, color='#1e293b')))
         st.plotly_chart(fig, use_container_width=True)
 
         hdr = ['Volatility', 'Call (\u00a2/lb)', '\u00b1SE', 'Put (\u00a2/lb)', '\u00b1SE']
