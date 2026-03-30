@@ -353,7 +353,7 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
         }
         updatemenus.append(dict(
             type='buttons',
-            x=X_POS[i], y=1.17, xanchor='left',
+            x=X_POS[i], y=1.28, xanchor='left',
             showactive=False,
             bgcolor=ACTIVE if i == 1 else DARK,   # Sideways active by default
             bordercolor='#0369a1',
@@ -366,7 +366,8 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
         ))
 
     fig.update_layout(
-        **PLOTLY_BASE, height=380,
+        **PLOTLY_BASE, height=420,
+        margin=dict(l=50, r=20, t=90, b=50),
         xaxis=dict(title='Days elapsed',
                    title_font=dict(size=13, color='#1e293b'),
                    tickfont=dict(size=11, color='#1e293b')),
