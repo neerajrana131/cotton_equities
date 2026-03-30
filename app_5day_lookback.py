@@ -787,14 +787,14 @@ if st.session_state.call_res is not None:
 
     with st.expander("⚡  Sensitivity Analysis — How prices respond to input changes"):
         st.caption(
-            "Runs the full LSM model at 2,000 paths across 7 spot prices and 7 vol levels. "
-            "Takes approximately 45\u201390 seconds."
+            "Runs the LSM model at 300 paths across 7 spot prices and 7 vol levels. "
+            "Takes approximately 10\u201315 seconds. (300 paths is sufficient for trend analysis.)"
         )
         if st.button("\u25b6\ufe0f  Run Sensitivity Analysis", type="secondary"):
-            with st.spinner("Running 14 sensitivity scenarios at 2,000 paths each\u2026"):
+            with st.spinner("Running 14 sensitivity scenarios\u2026"):
                 st.session_state.sens_res = run_sensitivity_analysis(
                     p['S0'], p['loan_value'], p['lrs'],
-                    p['r'], p['sigma'], p['days_to_maturity'], n_sens=2000)
+                    p['r'], p['sigma'], p['days_to_maturity'], n_sens=300)
         if st.session_state.sens_res is not None:
             chart_sensitivity(st.session_state.sens_res)
         else:
