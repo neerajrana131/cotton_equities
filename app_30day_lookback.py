@@ -212,11 +212,11 @@ def price_put_at_short_entry(S0, short_entry_price, r, sigma, days_to_maturity, 
 # ═══════════════════════════════════════════════════════════════════════════════
 
 PLOTLY_BASE = dict(
-    template='plotly_white', font=dict(family='Arial', size=12),
+    template='plotly_white', font=dict(family='Arial', size=12, color='#1e293b'),
     plot_bgcolor='#f8fafc', paper_bgcolor='#ffffff',
     margin=dict(l=50, r=20, t=50, b=50),
     legend=dict(orientation='h', yanchor='bottom', y=1.02,
-                xanchor='right', x=1, font=dict(size=11)),
+                xanchor='right', x=1, font=dict(size=11, color='#1e293b')),
 )
 
 
@@ -341,7 +341,7 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
             type='buttons', direction='right', x=0.0, y=1.17, xanchor='left',
             buttons=[dict(method='update', args=[{'visible': vis_list(i)}], label=s[0])
                      for i, s in enumerate(scenarios)],
-            showactive=True, bgcolor='#1e3a5f', bordercolor='#0369a1',
+            active=1, showactive=True, bgcolor='#1e3a5f', bordercolor='#0369a1',
             font=dict(size=11, color='white'),
         )],
     )
