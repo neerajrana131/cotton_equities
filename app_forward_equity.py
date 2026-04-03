@@ -463,8 +463,8 @@ def chart_strike_evolution(S0, r, sigma, total_days, loan, lrs, gin_day, gin_dat
                    title_font=dict(size=13, color='#1e293b'),
                    tickfont=dict(size=11, color='#1e293b')),
         updatemenus=updatemenus,
-        margin=dict(l=50, r=20, t=90, b=50),
     )
+    fig.update_layout(margin=dict(l=50, r=20, t=90, b=50))
     fig.add_hline(y=S0, line_dash='dot', line_color='#94a3b8', line_width=1,
                   annotation_text=f'  S\u2080={S0}\u00a2',
                   annotation_font_size=11, annotation_font_color='#94a3b8')
