@@ -143,8 +143,8 @@ def _collect_payoffs(S, exercise_indicators, ref_price, carry_rate, supplement,
             for offset in range(1, POST_EX_DAYS + 1):
                 mon = ex_day + offset
                 if mon < S.shape[1]:
-                    best = max(best, calculate_awp_for_day(S[i, :mon + 1], mon))
-            lb = max(best - k_ex, 0)
+                    best = min(best, calculate_awp_for_day(S[i, :mon + 1], mon))
+            lb = max(k_ex - best, 0)
         else:
             best = k_ex
             for offset in range(1, POST_EX_DAYS + 1):
