@@ -71,42 +71,45 @@ LB_LABEL     = "30-day"
 #  CORE PRICING FUNCTIONS  (gin_day-aware)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def calculate_awp_since_gin(prices, t, gin_day):
+def calculate_awp_since_gin(prices, t, gin_day, lrs):
     """
     5-day AWP computed only from gin_day onwards.
+    AWP_daily = futures_price − LRS  (LRS subtracted before averaging).
 
-    • t <= gin_day : returns price at gin_day (no AWP before bales exist).
-    • t >  gin_day : standard 5-day rolling average, with the clock starting
-                     at gin_day instead of day 0.
+    • t <= gin_day : returns (price at gin_day) − LRS  (no AWP before bales exist).
+    • t >  gin_day : 5-day rolling average of (price − LRS), clock starting at gin_day.
 
-    When gin_day = 0 this is identical to the original calculate_awp_for_day().
+    When gin_day = 0 and lrs = 0 this is identical to the original formula.
     """
     g = min(gin_day, len(prices) - 1)   # safe index cap
     if t <= g:
-        return prices[g]
+        return prices[g] - lrs
     days_since = t - g
     if days_since <= 5:
-        return prices[g]
+        return prices[g] - lrs
     cp = (days_since - 1) // 5
     s  = g + (cp - 1) * 5 + 1
     e  = min(g + cp * 5, t - 1)
-    return np.mean(prices[s:e + 1])
+    return np.mean(prices[s:e + 1]) - lrs
 
 
-def calculate_modified_strike(stock_prices, ref_price, carry_rate, t, gin_day, supplement=0.0):
+def calculate_modified_strike(stock_prices, ref_price, carry_rate, t, gin_day, lrs=0.0):
     """
     Two-phase strike:
-      Pre-gin  (t <= gin_day) : flat  = ref_price + supplement   (no carry, no AWP)
-      Post-gin (t >  gin_day) : min(AWP_since_gin,
-                                     ref_price + supplement + carry_rate * days_since_gin)
+      Pre-gin  (t <= gin_day) : flat  = ref_price                  (no carry, no AWP)
+      Post-gin (t >  gin_day) : min( AWP_since_gin,  ref_price + carry_rate * days_since_gin )
 
-    When gin_day = 0 this collapses to the original modified-strike formula.
+    AWP_since_gin = 5-day rolling average of (futures − LRS), starting from gin_day.
+    Ceiling = Loan + Carry only — LRS is NOT in the ceiling because it is already
+    subtracted from the futures price when computing the AWP.
+
+    When gin_day = 0 this collapses to the single-phase formula.
     """
     carry_days   = max(0, t - gin_day)
-    final_strike = ref_price + supplement + carry_rate * carry_days
+    final_strike = ref_price + carry_rate * carry_days   # Loan + Carry (no LRS)
     if carry_days == 0:
         return final_strike
-    awp = calculate_awp_since_gin(stock_prices, t, gin_day)
+    awp = calculate_awp_since_gin(stock_prices, t, gin_day, lrs)
     return min(awp, final_strike)
 
 
@@ -151,11 +154,16 @@ def _run_lsm(S, exercise_values, r, total_days, n_simulations):
     return option_values, exercise_indicators
 
 
-def _collect_payoffs(S, exercise_indicators, ref_price, carry_rate, supplement,
+def _collect_payoffs(S, exercise_indicators, ref_price, carry_rate, lrs,
                      n_simulations, r, direction, gin_day):
     """
-    Collect payoffs across simulations.  AWP lookback uses calculate_awp_since_gin
-    so it only tracks prices after gin_day — consistent with how the strike was built.
+    Collect payoffs across simulations.
+
+    Payoff uses AWP (= futures − LRS) as the effective price, not raw futures:
+      call payoff = AWP_at_exercise − strike
+      put  payoff = strike − AWP_at_exercise
+
+    30-day lookback tracks the minimum AWP (futures − LRS) after exercise.
     """
     dt                = 1 / 365.0
     final_payoffs     = np.zeros(n_simulations)
@@ -171,19 +179,21 @@ def _collect_payoffs(S, exercise_indicators, ref_price, carry_rate, supplement,
         exercise_times[i] = ex_day
 
         k_ex = calculate_modified_strike(
-            S[i, :ex_day + 1], ref_price, carry_rate, ex_day, gin_day, supplement)
+            S[i, :ex_day + 1], ref_price, carry_rate, ex_day, gin_day, lrs)
 
-        orig_payoff = (max(S[i, ex_day] - k_ex, 0) if direction == 'call'
-                       else max(k_ex - S[i, ex_day], 0))
+        # Effective price at exercise = AWP = futures − LRS
+        awp_at_ex   = S[i, ex_day] - lrs
+        orig_payoff = (max(awp_at_ex - k_ex, 0) if direction == 'call'
+                       else max(k_ex - awp_at_ex, 0))
         original_payoffs[i] = orig_payoff
 
-        # 30-day post-exercise lookback — tracks AWP since gin
+        # 30-day post-exercise lookback — tracks minimum AWP (futures − LRS) since gin
         best = k_ex
         for offset in range(1, POST_EX_DAYS + 1):
             mon = ex_day + offset
             if mon < S.shape[1]:
                 best = min(best,
-                           calculate_awp_since_gin(S[i, :mon + 1], mon, gin_day))
+                           calculate_awp_since_gin(S[i, :mon + 1], mon, gin_day, lrs))
         lb = max(k_ex - best, 0)
         lookback_benefits[i] = lb
         final_payoffs[i]     = (orig_payoff + lb) * np.exp(-r * ex_day * dt)
@@ -204,24 +214,25 @@ def price_american_call(S0, loan_value, lrs, r, sigma, days_to_maturity, gin_day
     S  = simulate_stock_prices_extended(S0, r, sigma, total_days, POST_EX_DAYS, n_simulations)
     ev = np.zeros((n_simulations, total_days + 1))
 
-    # Pre-gin: flat strike, vectorised (no path dependency)
+    # Pre-gin: flat strike = loan_value (no carry, no LRS in ceiling)
+    # Exercise value uses AWP = S - LRS as the effective price
     if gin_day > 0:
-        flat_k = loan_value + lrs
-        ev[:, :gin_day] = np.maximum(S[:, :gin_day] - flat_k, 0)
+        ev[:, :gin_day] = np.maximum(S[:, :gin_day] - lrs - loan_value, 0)
 
     # Post-gin: AWP-modified strike (path-dependent, requires loop)
     for t in range(gin_day, total_days + 1):
         for i in range(n_simulations):
             k        = calculate_modified_strike(S[i, :t + 1], loan_value, CARRY_RATE, t, gin_day, lrs)
-            ev[i, t] = max(S[i, t] - k, 0)
+            ev[i, t] = max((S[i, t] - lrs) - k, 0)
 
     _, ei = _run_lsm(S, ev, r, total_days, n_simulations)
-    k0  = calculate_modified_strike([S0], loan_value, CARRY_RATE, 0, gin_day, lrs)
-    res = _collect_payoffs(S, ei, loan_value, CARRY_RATE, lrs, n_simulations, r, 'call', gin_day)
+    k0    = calculate_modified_strike([S0], loan_value, CARRY_RATE, 0, gin_day, lrs)
+    floor = loan_value + lrs    # effective floor for display: Loan + LRS
+    res   = _collect_payoffs(S, ei, loan_value, CARRY_RATE, lrs, n_simulations, r, 'call', gin_day)
     res.update({
-        'moneyness':         'ITM' if S0 > k0 else ('ATM' if abs(S0 - k0) < 0.5 else 'OTM'),
-        'intrinsic':         max(S0 - k0, 0),
-        'strike_at_inception': k0,
+        'moneyness':           'ITM' if (S0 - lrs) > k0 else ('ATM' if abs((S0 - lrs) - k0) < 0.5 else 'OTM'),
+        'intrinsic':           max((S0 - lrs) - k0, 0),
+        'strike_at_inception': floor,   # display as Loan + LRS for user clarity
     })
     return res
 
@@ -231,24 +242,25 @@ def price_american_put(S0, loan_value, lrs, r, sigma, days_to_maturity, gin_day,
     S  = simulate_stock_prices_extended(S0, r, sigma, total_days, POST_EX_DAYS, n_simulations)
     ev = np.zeros((n_simulations, total_days + 1))
 
-    # Pre-gin: flat strike, vectorised
+    # Pre-gin: flat strike = loan_value (no carry, no LRS in ceiling)
+    # Exercise value uses AWP = S - LRS as the effective price
     if gin_day > 0:
-        flat_k = loan_value + lrs
-        ev[:, :gin_day] = np.maximum(flat_k - S[:, :gin_day], 0)
+        ev[:, :gin_day] = np.maximum(loan_value - (S[:, :gin_day] - lrs), 0)
 
-    # Post-gin: AWP-modified strike
+    # Post-gin: AWP-modified strike (path-dependent, requires loop)
     for t in range(gin_day, total_days + 1):
         for i in range(n_simulations):
             k        = calculate_modified_strike(S[i, :t + 1], loan_value, CARRY_RATE, t, gin_day, lrs)
-            ev[i, t] = max(k - S[i, t], 0)
+            ev[i, t] = max(k - (S[i, t] - lrs), 0)
 
     _, ei = _run_lsm(S, ev, r, total_days, n_simulations)
-    k0  = calculate_modified_strike([S0], loan_value, CARRY_RATE, 0, gin_day, lrs)
-    res = _collect_payoffs(S, ei, loan_value, CARRY_RATE, lrs, n_simulations, r, 'put', gin_day)
+    k0    = calculate_modified_strike([S0], loan_value, CARRY_RATE, 0, gin_day, lrs)
+    floor = loan_value + lrs    # effective floor for display: Loan + LRS
+    res   = _collect_payoffs(S, ei, loan_value, CARRY_RATE, lrs, n_simulations, r, 'put', gin_day)
     res.update({
-        'moneyness':         'ITM' if S0 < k0 else ('ATM' if abs(S0 - k0) < 0.5 else 'OTM'),
-        'intrinsic':         max(k0 - S0, 0),
-        'strike_at_inception': k0,
+        'moneyness':           'ITM' if (S0 - lrs) < k0 else ('ATM' if abs((S0 - lrs) - k0) < 0.5 else 'OTM'),
+        'intrinsic':           max(k0 - (S0 - lrs), 0),
+        'strike_at_inception': floor,   # display as Loan + LRS for user clarity
     })
     return res
 
@@ -318,8 +330,8 @@ def chart_fan(S0, r, sigma, total_days, loan, lrs, gin_day, gin_date_str):
     p10, p25, p50 = (np.percentile(Ss, q, axis=0) for q in (10, 25, 50))
     p75, p90      = (np.percentile(Ss, q, axis=0) for q in (75, 90))
 
-    # Floor: flat pre-gin, rising post-gin
-    floor = [loan + lrs + CARRY_RATE * max(0, d - gin_day) for d in days]
+    # Floor: flat pre-gin, rising post-gin — Loan + Carry only (LRS not in ceiling)
+    floor = [loan + CARRY_RATE * max(0, d - gin_day) for d in days]
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=days + days[::-1], y=list(p90) + list(p10[::-1]),
@@ -344,7 +356,7 @@ def chart_fan(S0, r, sigma, total_days, loan, lrs, gin_day, gin_date_str):
         line=dict(color='#0c4a6e', width=3.5), name='Median path'))
     fig.add_trace(go.Scatter(x=days, y=floor,
         line=dict(color='#d97706', width=2.5, dash='dash'),
-        name='Loan+LRS+Carry floor'))
+        name='Loan+Carry floor'))
     fig.add_hline(y=S0, line_dash='dot', line_color='#94a3b8', line_width=1,
                   annotation_text=f'  S\u2080={S0}\u00a2',
                   annotation_font_size=11, annotation_font_color='#94a3b8')
@@ -393,11 +405,11 @@ def chart_strike_evolution(S0, r, sigma, total_days, loan, lrs, gin_day, gin_dat
         prices_l, awps_l, strikes_l = [], [], []
         for t in days:
             carry_days = max(0, t - gin_day)
-            fl         = loan + lrs + CARRY_RATE * carry_days
+            fl         = loan + CARRY_RATE * carry_days   # Loan + Carry (no LRS)
             if t == 0:
-                awp = S0
+                awp = S0 - lrs   # AWP = futures − LRS
             else:
-                awp = calculate_awp_since_gin(path[:t + 1], t, gin_day)
+                awp = calculate_awp_since_gin(path[:t + 1], t, gin_day, lrs)
             strike = min(awp, fl) if carry_days > 0 else fl
             prices_l.append(path[t])
             awps_l.append(awp)
@@ -417,11 +429,11 @@ def chart_strike_evolution(S0, r, sigma, total_days, loan, lrs, gin_day, gin_dat
             name='Modified strike',
             hovertemplate='Day %{x}<br>Strike: %{y:.2f}\u00a2<extra></extra>'))
 
-    # Floor — always visible
-    floor_vals = [loan + lrs + CARRY_RATE * max(0, d - gin_day) for d in days]
+    # Floor — always visible (Loan + Carry only, no LRS)
+    floor_vals = [loan + CARRY_RATE * max(0, d - gin_day) for d in days]
     fig.add_trace(go.Scatter(x=days, y=floor_vals,
         line=dict(color='#d97706', width=2, dash='dash'),
-        name='Loan+LRS+Carry floor', visible=True,
+        name='Loan+Carry floor', visible=True,
         hovertemplate='Day %{x}<br>Floor: %{y:.2f}\u00a2<extra></extra>'))
 
     def vis_list(active):
@@ -469,12 +481,12 @@ def chart_strike_evolution(S0, r, sigma, total_days, loan, lrs, gin_day, gin_dat
                   annotation_text=f'  S\u2080={S0}\u00a2',
                   annotation_font_size=11, annotation_font_color='#94a3b8')
     st.plotly_chart(fig, use_container_width=True)
-    pre_note = (f'  ·  Pre-gin strike is flat at Loan+LRS (day 0\u2013{gin_day})'
+    pre_note = (f'  ·  Pre-gin strike is flat at Loan (day 0–{gin_day})'
                 if gin_day > 0 else '')
     st.caption(
-        "Thick line = modified strike = min(AWP\u2099, Loan+LRS+Carry)  \u00b7  "
-        "Dotted = spot  \u00b7  Dash-dot = AWP (5-day, since gin)  \u00b7  "
-        f"Dashed amber = carry floor{pre_note}  \u00b7  Click buttons to switch scenario"
+        "Thick line = modified strike = min(AWPₙ, Loan+Carry)  ·  "
+        "Dotted = spot price  ·  Dash-dot = AWP = futures−LRS (5-day, since gin)  ·  "
+        f"Dashed amber = Loan+Carry floor{pre_note}  ·  Click buttons to switch scenario"
     )
 
 
