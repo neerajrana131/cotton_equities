@@ -159,11 +159,15 @@ def _collect_payoffs(S, exercise_indicators, ref_price, carry_rate, lrs,
     """
     Collect payoffs across simulations.
 
-    Payoff uses AWP (= futures − LRS) as the effective price, not raw futures:
-      call payoff = AWP_at_exercise − strike
-      put  payoff = strike − AWP_at_exercise
+    CALL payoff = S_at_exercise − K   (farmer sells cotton at full futures price S,
+                                        repays loan at K = min(AWP, Loan+Carry))
+    PUT  payoff = K − AWP_at_exercise  (protection when repayment rate K exceeds AWP)
 
-    30-day lookback tracks the minimum AWP (futures − LRS) after exercise.
+    30-day lookback:
+      Call: tracks minimum K in the post-exercise window — farmer benefits if the
+            repayment rate dropped (cheaper to repay).  lb = max(K_ex − K_min, 0)
+      Put:  tracks minimum AWP — holder benefits if AWP drops further.
+            lb = max(K_ex − min_AWP, 0)
     """
     dt                = 1 / 365.0
     final_payoffs     = np.zeros(n_simulations)
@@ -181,19 +185,27 @@ def _collect_payoffs(S, exercise_indicators, ref_price, carry_rate, lrs,
         k_ex = calculate_modified_strike(
             S[i, :ex_day + 1], ref_price, carry_rate, ex_day, gin_day, lrs)
 
-        # Effective price at exercise = AWP = futures − LRS
-        awp_at_ex   = S[i, ex_day] - lrs
-        orig_payoff = (max(awp_at_ex - k_ex, 0) if direction == 'call'
+        awp_at_ex = S[i, ex_day] - lrs
+        # Call: sell at full S, repay at K  →  payoff = S − K
+        # Put:  effective price is AWP; protection when K > AWP
+        orig_payoff = (max(S[i, ex_day] - k_ex, 0) if direction == 'call'
                        else max(k_ex - awp_at_ex, 0))
         original_payoffs[i] = orig_payoff
 
-        # 30-day post-exercise lookback — tracks minimum AWP (futures − LRS) since gin
+        # 30-day post-exercise lookback
+        # Call: track minimum K (cheapest repayment opportunity)
+        # Put:  track minimum AWP (largest protection opportunity)
         best = k_ex
         for offset in range(1, POST_EX_DAYS + 1):
             mon = ex_day + offset
             if mon < S.shape[1]:
-                best = min(best,
-                           calculate_awp_since_gin(S[i, :mon + 1], mon, gin_day, lrs))
+                if direction == 'call':
+                    k_mon = calculate_modified_strike(
+                        S[i, :mon + 1], ref_price, carry_rate, mon, gin_day, lrs)
+                    best = min(best, k_mon)
+                else:
+                    best = min(best,
+                               calculate_awp_since_gin(S[i, :mon + 1], mon, gin_day, lrs))
         lb = max(k_ex - best, 0)
         lookback_benefits[i] = lb
         final_payoffs[i]     = (orig_payoff + lb) * np.exp(-r * ex_day * dt)
@@ -214,25 +226,24 @@ def price_american_call(S0, loan_value, lrs, r, sigma, days_to_maturity, gin_day
     S  = simulate_stock_prices_extended(S0, r, sigma, total_days, POST_EX_DAYS, n_simulations)
     ev = np.zeros((n_simulations, total_days + 1))
 
-    # Pre-gin: flat strike = loan_value (no carry, no LRS in ceiling)
-    # Exercise value uses AWP = S - LRS as the effective price
+    # Pre-gin: flat strike = loan_value.  Payoff = S − Loan (sell at full S, repay Loan).
     if gin_day > 0:
-        ev[:, :gin_day] = np.maximum(S[:, :gin_day] - lrs - loan_value, 0)
+        ev[:, :gin_day] = np.maximum(S[:, :gin_day] - loan_value, 0)
 
-    # Post-gin: AWP-modified strike (path-dependent, requires loop)
+    # Post-gin: payoff = S − K  where K = min(AWP, Loan+Carry).
+    # Uses full futures price S as the sale price; LRS is embedded in AWP which sets K.
     for t in range(gin_day, total_days + 1):
         for i in range(n_simulations):
             k        = calculate_modified_strike(S[i, :t + 1], loan_value, CARRY_RATE, t, gin_day, lrs)
-            ev[i, t] = max((S[i, t] - lrs) - k, 0)
+            ev[i, t] = max(S[i, t] - k, 0)
 
     _, ei = _run_lsm(S, ev, r, total_days, n_simulations)
-    k0    = calculate_modified_strike([S0], loan_value, CARRY_RATE, 0, gin_day, lrs)
-    floor = loan_value + lrs    # effective floor for display: Loan + LRS
+    k0    = calculate_modified_strike([S0], loan_value, CARRY_RATE, 0, gin_day, lrs)  # = loan_value
     res   = _collect_payoffs(S, ei, loan_value, CARRY_RATE, lrs, n_simulations, r, 'call', gin_day)
     res.update({
-        'moneyness':           'ITM' if (S0 - lrs) > k0 else ('ATM' if abs((S0 - lrs) - k0) < 0.5 else 'OTM'),
-        'intrinsic':           max((S0 - lrs) - k0, 0),
-        'strike_at_inception': floor,   # display as Loan + LRS for user clarity
+        'moneyness':           'ITM' if S0 > k0 else ('ATM' if abs(S0 - k0) < 0.5 else 'OTM'),
+        'intrinsic':           max(S0 - k0, 0),   # S0 − Loan (min payoff = LRS when AWP<ceiling)
+        'strike_at_inception': k0,                 # actual repayment strike = loan_value
     })
     return res
 
