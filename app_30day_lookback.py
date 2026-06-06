@@ -60,20 +60,30 @@ LB_LABEL     = "30-day"
 #  PRICING FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def calculate_awp_for_day(prices, current_day):
+def calculate_awp_for_day(prices, current_day, lrs=0.0):
+    """
+    5-day rolling average of (price − LRS).
+    AWP_daily = futures − LRS; AWP = 5-day avg of those values.
+    When lrs=0 this is identical to the original formula.
+    """
     if current_day <= 5:
-        return prices[0]
+        return prices[0] - lrs
     cp = (current_day - 1) // 5
     s  = (cp - 1) * 5 + 1
     e  = min(s + 4, current_day - 1)
-    return np.mean(prices[s:e + 1])
+    return np.mean(prices[s:e + 1]) - lrs
 
 def calculate_modified_strike(stock_prices, ref_price, carry_rate,
-                               days_elapsed, supplement=0.0):
-    final_strike = ref_price + supplement + carry_rate * days_elapsed
+                               days_elapsed, lrs=0.0):
+    """
+    Modified strike = min(AWP, Loan + Carry).
+    Ceiling = Loan + Carry only — LRS is NOT in the ceiling because it is
+    already subtracted from futures when computing AWP.
+    """
+    final_strike = ref_price + carry_rate * days_elapsed   # Loan + Carry, no LRS
     if days_elapsed == 0:
         return final_strike
-    awp = calculate_awp_for_day(stock_prices, days_elapsed)
+    awp = calculate_awp_for_day(stock_prices, days_elapsed, lrs)   # AWP = avg(S) − LRS
     return min(awp, final_strike)
 
 def simulate_stock_prices_extended(S0, r, sigma, days_to_maturity,
@@ -114,8 +124,13 @@ def _run_lsm(S, exercise_values, r, days_to_maturity, n_simulations):
             option_values *= np.exp(-r * dt)
     return option_values, exercise_indicators
 
-def _collect_payoffs(S, exercise_indicators, ref_price, carry_rate, supplement,
+def _collect_payoffs(S, exercise_indicators, ref_price, carry_rate, lrs,
                      n_simulations, r, direction):
+    """
+    CALL: sell at full futures price S, repay at K = min(AWP, Loan+Carry).
+          payoff = S − K.  Lookback tracks minimum K over 30 days (cheapest repayment).
+    PUT:  payoff = max(K − AWP, 0).  Lookback tracks minimum AWP over 30 days.
+    """
     dt                = 1 / 365.0
     final_payoffs     = np.zeros(n_simulations)
     original_payoffs  = np.zeros(n_simulations)
@@ -128,24 +143,23 @@ def _collect_payoffs(S, exercise_indicators, ref_price, carry_rate, supplement,
         ex_day  = ex_days[0]
         exercise_times[i] = ex_day
         k_ex    = calculate_modified_strike(S[i, :ex_day + 1], ref_price,
-                                            carry_rate, ex_day, supplement)
+                                            carry_rate, ex_day, lrs)
+        awp_at_ex   = S[i, ex_day] - lrs
         orig_payoff = (max(S[i, ex_day] - k_ex, 0) if direction == 'call'
-                       else max(k_ex - S[i, ex_day], 0))
+                       else max(k_ex - awp_at_ex, 0))
         original_payoffs[i] = orig_payoff
-        if direction == 'call':
-            best = k_ex
-            for offset in range(1, POST_EX_DAYS + 1):
-                mon = ex_day + offset
-                if mon < S.shape[1]:
-                    best = min(best, calculate_awp_for_day(S[i, :mon + 1], mon))
-            lb = max(k_ex - best, 0)
-        else:
-            best = k_ex
-            for offset in range(1, POST_EX_DAYS + 1):
-                mon = ex_day + offset
-                if mon < S.shape[1]:
-                    best = min(best, calculate_awp_for_day(S[i, :mon + 1], mon))
-            lb = max(k_ex - best, 0)
+        # 30-day lookback: call tracks min K; put tracks min AWP
+        best = k_ex
+        for offset in range(1, POST_EX_DAYS + 1):
+            mon = ex_day + offset
+            if mon < S.shape[1]:
+                if direction == 'call':
+                    k_mon = calculate_modified_strike(
+                        S[i, :mon + 1], ref_price, carry_rate, mon, lrs)
+                    best = min(best, k_mon)
+                else:
+                    best = min(best, calculate_awp_for_day(S[i, :mon + 1], mon, lrs))
+        lb = max(k_ex - best, 0)
         lookback_benefits[i] = lb
         final_payoffs[i]     = (orig_payoff + lb) * np.exp(-r * ex_day * dt)
     ex_mask = exercise_times > 0
@@ -232,7 +246,7 @@ def chart_fan(S0, r, sigma, T, loan, lrs):
     Ss   = S[:, ::step]
     p10, p25, p50 = (np.percentile(Ss, q, axis=0) for q in (10, 25, 50))
     p75, p90      = (np.percentile(Ss, q, axis=0) for q in (75, 90))
-    floor         = [loan + lrs + CARRY_RATE * d for d in days]
+    floor         = [loan + CARRY_RATE * d for d in days]   # Loan + Carry, no LRS
 
     fig = go.Figure()
     # Outer 10–90th band with visible boundary lines
@@ -260,7 +274,7 @@ def chart_fan(S0, r, sigma, T, loan, lrs):
         line=dict(color='#0c4a6e', width=3.5), name='Median path'))
     fig.add_trace(go.Scatter(x=days, y=floor,
         line=dict(color='#d97706', width=2.5, dash='dash'),
-        name='Loan+LRS+Carry floor'))
+        name='Loan+Carry floor'))
     fig.add_hline(y=S0, line_dash='dot', line_color='#94a3b8', line_width=1,
                   annotation_text=f'  S\u2080={S0}\u00a2',
                   annotation_font_size=11, annotation_font_color='#94a3b8')
@@ -301,11 +315,11 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
 
         prices_l, awps_l, strikes_l = [], [], []
         for t in days:
-            awp    = calculate_awp_for_day(path[:t+1], t) if t > 0 else S0
-            fl     = loan + lrs + CARRY_RATE * t
+            awp    = calculate_awp_for_day(path[:t+1], t, lrs) if t > 0 else S0 - lrs
+            fl     = loan + CARRY_RATE * t          # Loan + Carry ceiling, no LRS
             prices_l.append(path[t])
             awps_l.append(awp)
-            strikes_l.append(min(awp, fl))
+            strikes_l.append(min(awp, fl) if t > 0 else fl)
 
         vis = (s_idx == 1)
         fig.add_trace(go.Scatter(x=days, y=prices_l,
@@ -321,11 +335,11 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
             name='Modified strike',
             hovertemplate='Day %{x}<br>Strike: %{y:.2f}\u00a2<extra></extra>'))
 
-    # Floor — always visible (last trace)
-    floor_vals = [loan + lrs + CARRY_RATE * d for d in days]
+    # Floor — always visible (last trace) — Loan + Carry only, no LRS
+    floor_vals = [loan + CARRY_RATE * d for d in days]
     fig.add_trace(go.Scatter(x=days, y=floor_vals,
         line=dict(color='#d97706', width=2, dash='dash'),
-        name='Loan+LRS+Carry floor', visible=True,
+        name='Loan+Carry floor', visible=True,
         hovertemplate='Day %{x}<br>Floor: %{y:.2f}\u00a2<extra></extra>'))
 
     def vis_list(active):
@@ -381,9 +395,9 @@ def chart_strike_evolution(S0, r, sigma, T, loan, lrs):
                   annotation_font_size=11, annotation_font_color='#94a3b8')
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
-        "Thick line = modified strike = min(AWP, Loan+LRS+Carry)  \u00b7  "
-        "Dotted = spot price  \u00b7  Dash-dot = AWP (5-day avg)  \u00b7  "
-        "Dashed amber = loan floor  \u00b7  Click scenario buttons to switch"
+        "Thick line = modified strike = min(AWP, Loan+Carry)  \u00b7  "
+        "Dotted = spot price  \u00b7  Dash-dot = AWP = Futures\u2212LRS (5-day avg)  \u00b7  "
+        "Dashed amber = Loan+Carry floor  \u00b7  Click scenario buttons to switch"
     )
 
 
@@ -800,5 +814,5 @@ st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 st.caption(
     "Model: Longstaff-Schwartz LSM \u00b7 GBM simulation \u00b7 "
     "30-day post-exercise AWP lookback \u00b7 "
-    "Modified strike = min(AWP, Loan+LRS+Carry) \u00b7 Carry = 0.0233 \u00a2/lb/day"
+    "Modified strike = min(AWP, Loan+Carry) where AWP = Futures\u2212LRS  \u00b7  Carry = 0.0233 \u00a2/lb/day"
 )
